@@ -14,3 +14,5 @@ compile_commands.json
 
 # Fichiers de log temporaires éventuels
 *.log
+.cache/
+.vscode/
