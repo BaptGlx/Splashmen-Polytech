@@ -1,0 +1,16 @@
+# Fichiers compilés classiques
+*.o
+*.so
+*.out
+*.app
+
+# L'exécutable principal
+splash
+
+# Dossiers cachés ou de configuration d'éditeur
+.vscode/
+compile_commands.json
+.DS_Store
+
+# Fichiers de log temporaires éventuels
+*.log
