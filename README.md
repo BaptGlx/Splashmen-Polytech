@@ -1,6 +1,6 @@
-# Splashmem IA - Bataille de robots colorés 🤖🎨
+# Splashmem IA - Polytech
 
-Splashmem IA est un jeu / moteur de simulation de bataille conçu en C dans lequel jusqu'à 4 bots (IA) s'affrontent sur une grille de 100x100. Le but est de terminer la partie en ayant colorié le maximum de cases à la couleur de votre bot. L'interface et le rendu visuel sont gérés avec la librairie C graphique **SDL2**.
+Splashmem IA est un jeu de simulation de bataille conçu en C dans lequel jusqu'à 4 bots s'affrontent sur une grille de 100x100. Le but est de terminer la partie en ayant colorié le maximum de cases à la couleur de votre bot. L'interface et le rendu visuel sont gérés avec la librairie C graphique **SDL2**.
 
 ## 🗂 Architecture et Fichiers
 - `main.c` : Le moteur de jeu principal. Il s'occupe de l'affichage graphique, du chargement dynamique des bibliothèques des bots (`.so`), et de la mécanique de jeu.
