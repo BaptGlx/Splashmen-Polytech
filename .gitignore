@@ -9,6 +9,7 @@ splash
 
 # Dossiers cachés ou de configuration d'éditeur
 .vscode/
+.cache/
 compile_commands.json
 .DS_Store
 
