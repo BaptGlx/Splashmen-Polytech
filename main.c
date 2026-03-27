@@ -142,11 +142,20 @@ static void get_movement(char action, int *dx, int *dy) {
  * ============================================ */
 static int load_player(GameState *game, const char *so_path, int player_id) {
   Player *p = &game->players[player_id];
+  char safe_path[512];
+
+  /* Si le chemin ne contient pas de '/', on ajoute './' pour forcer la recherche locale (fix pour Linux) */
+  if (strchr(so_path, '/') == NULL) {
+    snprintf(safe_path, sizeof(safe_path), "./%s", so_path);
+  } else {
+    strncpy(safe_path, so_path, sizeof(safe_path) - 1);
+    safe_path[sizeof(safe_path) - 1] = '\0';
+  }
 
   /* Ouvrir la bibliothèque dynamique */
-  p->handle = dlopen(so_path, RTLD_NOW);
+  p->handle = dlopen(safe_path, RTLD_NOW);
   if (!p->handle) {
-    fprintf(stderr, "Erreur: Impossible de charger '%s': %s\n", so_path,
+    fprintf(stderr, "Erreur: Impossible de charger '%s': %s\n", safe_path,
             dlerror());
     return -1;
   }
@@ -156,7 +165,7 @@ static int load_player(GameState *game, const char *so_path, int player_id) {
   p->get_action = (char (*)(void))dlsym(p->handle, "get_action");
   char *error = dlerror();
   if (error != NULL) {
-    fprintf(stderr, "Erreur: 'get_action' non trouvée dans '%s': %s\n", so_path,
+    fprintf(stderr, "Erreur: 'get_action' non trouvée dans '%s': %s\n", safe_path,
             error);
     dlclose(p->handle);
     return -1;
