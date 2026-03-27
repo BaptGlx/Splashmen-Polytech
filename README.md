@@ -1,6 +1,13 @@
 # Splashmem IA - Polytech
 
-Splashmem IA est un jeu de simulation de bataille conçu en C dans lequel jusqu'à 4 bots s'affrontent sur une grille de 100x100. Le but est de terminer la partie en ayant colorié le maximum de cases à la couleur de votre bot. L'interface et le rendu visuel sont gérés avec la librairie C graphique **SDL2**.
+Splashmem IA est un jeu de simulation de bataille conçu en C dans lequel jusqu'à 4 bots s'affrontent sur une grille de 100x100. Le but est de terminer la partie en ayant colorié le maximum de cases à la couleur de votre bot.
+
+## 💻 Technologies Utilisées
+
+- **Langage C** : Cœur du moteur de jeu et logique des bots. Utilisation de la bibliothèque `dlfcn.h` pour le chargement dynamique des joueurs (fichiers `.so`) à l'exécution.
+- **SDL2 (Simple DirectMedia Layer)** : Gestion de l'interface graphique, du rendu 2D de la grille de jeu, de la boucle de rendu et des événements utilisateur (clavier, fermeture de fenêtre).
+- **Make / Makefile** : Système de build permettant l'automatisation de la compilation de l'exécutable principal et la génération des bibliothèques partagées pour les bots.
+- **pkg-config** : Utilitaire intégré au processus de build pour résoudre et injecter automatiquement les bons flags de compilation (`CFLAGS`) et d'édition de liens (`LDFLAGS`) requis par SDL2, garantissant la portabilité entre différents systèmes.
 
 ## 🗂 Architecture et Fichiers
 - `main.c` : Le moteur de jeu principal. Il s'occupe de l'affichage graphique, du chargement dynamique des bibliothèques des bots (`.so`), et de la mécanique de jeu.
@@ -10,8 +17,6 @@ Splashmem IA est un jeu de simulation de bataille conçu en C dans lequel jusqu'
 - `Makefile` : Fichier permettant la compilation automatique du jeu et des bots.
 
 ## 🛠 Dépendances et Compatibilité
-Pour être compilé, le code repose sur un compilateur C classique, d'un outil de Build (`make`), de `pkg-config` et de **SDL2**.
-
 Le code et le système de compilation sont entièrement conçus pour être **naturellement portables et compatibles sous Linux ou macOS**, les chemins d'inclusions étant récupérés dynamiquement au lieu d'être définis en dur.
 
 **Prérequis selon votre système :**
