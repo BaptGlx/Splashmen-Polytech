@@ -43,3 +43,11 @@ Le `Makefile` dispose d'une commande toute prête pour lancer un affrontement de
 ```bash
 make test
 ```
+
+## 🎓 Crédits
+
+* **Contexte** : Projet éducatif réalisé dans le cadre de Polytech Tours.
+
+* **Auteurs** : Baptiste Guilleux et Hugo Braux.
+
+* **Assistance** : Code assisté avec le modèle IA Gemini 3.1 Pro.
