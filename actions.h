@@ -6,40 +6,27 @@
 #ifndef ACTIONS_H
 #define ACTIONS_H
 
-/* ============================================
- * Actions de déplacement simple (1 case)
- * Coût: 1 crédit
- * ============================================ */
-#define ACTION_MOVE_U     0x01
-#define ACTION_MOVE_D     0x02
-#define ACTION_MOVE_L     0x03
-#define ACTION_MOVE_R     0x04
-
-/* ============================================
- * Actions DASH (8 cases)
- * Coût: 10 crédits
- * Colore toutes les cases du chemin et la case d'arrivée
- * ============================================ */
-#define ACTION_DASH_U     0x11
-#define ACTION_DASH_D     0x12
-#define ACTION_DASH_L     0x13
-#define ACTION_DASH_R     0x14
-
-/* ============================================
- * Actions TELEPORT (8 cases)
- * Coût: 2 crédits
- * Seule la case d'arrivée est colorée
- * ============================================ */
-#define ACTION_TELEPORT_U     0x21
-#define ACTION_TELEPORT_D     0x22
-#define ACTION_TELEPORT_L     0x23
-#define ACTION_TELEPORT_R     0x24
-
-/* ============================================
- * Action STILL (reste sur place)
- * Coût: 1 crédit
- * ============================================ */
-#define ACTION_STILL   0x00
+enum action {
+    ACTION_STILL, // 0
+    ACTION_MOVE_L, // 1
+    ACTION_MOVE_R, // 2
+    ACTION_MOVE_U, // 3
+    ACTION_MOVE_D,
+    ACTION_DASH_L,
+    ACTION_DASH_R,
+    ACTION_DASH_U,
+    ACTION_DASH_D,
+    ACTION_TELEPORT_L,
+    ACTION_TELEPORT_R,
+    ACTION_TELEPORT_U,
+    ACTION_TELEPORT_D,
+    ACTION_BOMB, // 13
+    ACTION_FORK, // 14
+    ACTION_CLEAN, // 15
+    ACTION_MUTE, // 16
+    ACTION_SWAP, // 17
+    ACTION_NUMBER
+};
 
 /* ============================================
  * Constantes de jeu
@@ -53,6 +40,10 @@
 #define COST_MOVE       1
 #define COST_DASH       10
 #define COST_TELEPORT   2
+#define COST_BOMB       9
+#define COST_CLEAN      40
+#define COST_MUTE       30
+#define COST_SWAP       35
 #define COST_STILL      1
 
 /* Distance de déplacement */

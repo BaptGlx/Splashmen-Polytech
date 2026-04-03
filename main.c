@@ -38,12 +38,30 @@ static const SDL_Color PLAYER_MARKER = {
  * ============================================ */
 typedef struct {
   void *handle;             /* Handle de la bibliothèque .so */
-  char (*get_action)(void); /* Pointeur vers la fonction get_action */
+  enum action (*get_action)(void); /* Pointeur vers la fonction get_action */
   int x, y;                 /* Position actuelle */
   int credits;              /* Crédits restants */
   int score;                /* Nombre de cases colorées */
   SDL_Color color;          /* Couleur du joueur */
   char name[256];           /* Nom du fichier .so */
+
+  /* Champs pour le parseur .txt */
+  int is_txt;
+  enum action *txt_actions;
+  int num_txt_actions;
+  int txt_action_idx;
+
+  /* Timers et effets état */
+  int mute_timer;
+  int swap_timer;
+  int swap_beneficiary;
+  
+  int fork_timer;
+  int fork_active_timer;
+  int fork_x, fork_y;
+  
+  int bomb_timer;
+  int bomb_x, bomb_y;
 } Player;
 
 /* ============================================
@@ -71,7 +89,7 @@ static int wrap(int coord, int max) {
 }
 
 /* Calcule le coût d'une action */
-static int get_action_cost(char action) {
+static int get_action_cost(enum action action) {
   switch (action) {
   case ACTION_MOVE_U:
   case ACTION_MOVE_D:
@@ -91,6 +109,12 @@ static int get_action_cost(char action) {
   case ACTION_TELEPORT_R:
     return COST_TELEPORT;
 
+  case ACTION_BOMB: return COST_BOMB;
+  case ACTION_CLEAN: return COST_CLEAN;
+  case ACTION_MUTE: return COST_MUTE;
+  case ACTION_SWAP: return COST_SWAP;
+  case ACTION_FORK: return 0; /* Le coût doubleur de FORK est traité à la volée */
+
   case ACTION_STILL:
   default:
     return COST_STILL;
@@ -98,16 +122,16 @@ static int get_action_cost(char action) {
 }
 
 /* Calcule le déplacement (dx, dy) pour une action */
-static void get_movement(char action, int *dx, int *dy) {
+static void get_movement(enum action action, int *dx, int *dy) {
   *dx = 0;
   *dy = 0;
 
   int distance = 1;
 
   /* Détermine la distance */
-  if ((action >= ACTION_DASH_U && action <= ACTION_DASH_R) ||
-      (action >= ACTION_TELEPORT_U && action <= ACTION_TELEPORT_R)) {
-    distance = 8;
+  if ((action >= ACTION_DASH_L && action <= ACTION_DASH_D) ||
+      (action >= ACTION_TELEPORT_L && action <= ACTION_TELEPORT_D)) {
+    distance = DASH_DISTANCE;
   }
 
   /* Détermine la direction */
@@ -133,50 +157,118 @@ static void get_movement(char action, int *dx, int *dy) {
     *dx = distance;
     break;
   default:
-    break; /* ACTION_STILL ou action invalide */
+    break; /* ACTION_STILL, ou nouvelle action non-mouvement */
   }
+}
+
+/* Parsing d'une chaîne d'action en enum action */
+static enum action parse_action_string(char *str) {
+    /* Nettoyage espaces / retours chariot en fin */
+    char *end = str + strlen(str) - 1;
+    while(end > str && (*end == ' ' || *end == '\n' || *end == '\r')) end--;
+    end[1] = '\0';
+    /* Saut espaces en début */
+    while(*str == ' ') str++;
+
+    if (strcmp(str, "ACTION_MOVE_L") == 0) return ACTION_MOVE_L;
+    if (strcmp(str, "ACTION_MOVE_R") == 0) return ACTION_MOVE_R;
+    if (strcmp(str, "ACTION_MOVE_U") == 0) return ACTION_MOVE_U;
+    if (strcmp(str, "ACTION_MOVE_D") == 0) return ACTION_MOVE_D;
+    if (strcmp(str, "ACTION_DASH_L") == 0) return ACTION_DASH_L;
+    if (strcmp(str, "ACTION_DASH_R") == 0) return ACTION_DASH_R;
+    if (strcmp(str, "ACTION_DASH_U") == 0) return ACTION_DASH_U;
+    if (strcmp(str, "ACTION_DASH_D") == 0) return ACTION_DASH_D;
+    if (strcmp(str, "ACTION_TELEPORT_L") == 0) return ACTION_TELEPORT_L;
+    if (strcmp(str, "ACTION_TELEPORT_R") == 0) return ACTION_TELEPORT_R;
+    if (strcmp(str, "ACTION_TELEPORT_U") == 0) return ACTION_TELEPORT_U;
+    if (strcmp(str, "ACTION_TELEPORT_D") == 0) return ACTION_TELEPORT_D;
+    if (strcmp(str, "ACTION_BOMB") == 0) return ACTION_BOMB;
+    if (strcmp(str, "ACTION_FORK") == 0) return ACTION_FORK;
+    if (strcmp(str, "ACTION_CLEAN") == 0) return ACTION_CLEAN;
+    if (strcmp(str, "ACTION_MUTE") == 0) return ACTION_MUTE;
+    if (strcmp(str, "ACTION_SWAP") == 0) return ACTION_SWAP;
+    return ACTION_STILL;
+}
+
+/* Distance de Manhattan avec wrap-around torique */
+static int manhattan_toric(int x1, int y1, int x2, int y2) {
+    int dx = abs(x1 - x2);
+    if (dx > GRID_WIDTH / 2) dx = GRID_WIDTH - dx;
+    int dy = abs(y1 - y2);
+    if (dy > GRID_HEIGHT / 2) dy = GRID_HEIGHT - dy;
+    return dx + dy;
 }
 
 /* ============================================
  * Chargement des joueurs
  * ============================================ */
-static int load_player(GameState *game, const char *so_path, int player_id) {
+static int load_player(GameState *game, const char *path, int player_id) {
   Player *p = &game->players[player_id];
-  char safe_path[512];
+  memset(p, 0, sizeof(Player));
 
-  /* Si le chemin ne contient pas de '/', on ajoute './' pour forcer la recherche locale (fix pour Linux) */
-  if (strchr(so_path, '/') == NULL) {
-    snprintf(safe_path, sizeof(safe_path), "./%s", so_path);
-  } else {
-    strncpy(safe_path, so_path, sizeof(safe_path) - 1);
-    safe_path[sizeof(safe_path) - 1] = '\0';
-  }
-
-  /* Ouvrir la bibliothèque dynamique */
-  p->handle = dlopen(safe_path, RTLD_NOW);
-  if (!p->handle) {
-    fprintf(stderr, "Erreur: Impossible de charger '%s': %s\n", safe_path,
-            dlerror());
-    return -1;
-  }
-
-  /* Récupérer la fonction get_action */
-  dlerror(); /* Clear any existing error */
-  p->get_action = (char (*)(void))dlsym(p->handle, "get_action");
-  char *error = dlerror();
-  if (error != NULL) {
-    fprintf(stderr, "Erreur: 'get_action' non trouvée dans '%s': %s\n", safe_path,
-            error);
-    dlclose(p->handle);
-    return -1;
-  }
-
-  /* Initialiser le joueur */
-  strncpy(p->name, so_path, sizeof(p->name) - 1);
+  strncpy(p->name, path, sizeof(p->name) - 1);
   p->name[sizeof(p->name) - 1] = '\0';
   p->credits = STARTING_CREDITS;
   p->score = 0;
   p->color = PLAYER_COLORS[player_id];
+
+  size_t path_len = strlen(path);
+  if (path_len >= 4 && strcmp(path + path_len - 4, ".txt") == 0) {
+    p->is_txt = 1;
+    FILE *f = fopen(path, "r");
+    if (!f) {
+      fprintf(stderr, "Erreur: Impossible d'ouvrir le fichier texte '%s'\n", path);
+      return -1;
+    }
+    char buffer[4096];
+    if (fgets(buffer, sizeof(buffer), f)) {
+      int count = 1;
+      for (int i = 0; buffer[i]; i++) {
+        if (buffer[i] == ',') count++;
+      }
+      p->txt_actions = malloc(sizeof(enum action) * count);
+      p->num_txt_actions = 0;
+      char *token = strtok(buffer, ",");
+      while (token) {
+        p->txt_actions[p->num_txt_actions++] = parse_action_string(token);
+        token = strtok(NULL, ",");
+      }
+    }
+    fclose(f);
+    if (p->num_txt_actions == 0) {
+      fprintf(stderr, "Erreur: Fichier txt '%s' sans actions valides\n", path);
+      return -1;
+    }
+  } else {
+    p->is_txt = 0;
+    char safe_path[512];
+    /* Si le chemin ne contient pas de '/', on ajoute './' pour forcer la recherche locale (fix pour Linux) */
+    if (strchr(path, '/') == NULL) {
+      snprintf(safe_path, sizeof(safe_path), "./%s", path);
+    } else {
+      strncpy(safe_path, path, sizeof(safe_path) - 1);
+      safe_path[sizeof(safe_path) - 1] = '\0';
+    }
+
+    /* Ouvrir la bibliothèque dynamique */
+    p->handle = dlopen(safe_path, RTLD_NOW);
+    if (!p->handle) {
+      fprintf(stderr, "Erreur: Impossible de charger '%s': %s\n", safe_path,
+              dlerror());
+      return -1;
+    }
+
+    /* Récupérer la fonction get_action */
+    dlerror(); /* Clear any existing error */
+    p->get_action = (enum action (*)(void))dlsym(p->handle, "get_action");
+    char *error = dlerror();
+    if (error != NULL) {
+      fprintf(stderr, "Erreur: 'get_action' non trouvée dans '%s': %s\n", safe_path,
+              error);
+      dlclose(p->handle);
+      return -1;
+    }
+  }
 
   /* Position de départ avec espacement égal */
   switch (player_id) {
@@ -202,7 +294,7 @@ static int load_player(GameState *game, const char *so_path, int player_id) {
   game->grid[p->y][p->x] = player_id;
   p->score = 1;
 
-  printf("Joueur %d chargé: %s (position: %d,%d)\n", player_id + 1, so_path,
+  printf("Joueur %d chargé: %s (position: %d,%d)\n", player_id + 1, path,
          p->x, p->y);
   return 0;
 }
@@ -269,10 +361,13 @@ static int init_game(GameState *game, int argc, char **argv) {
  * Nettoyage
  * ============================================ */
 static void cleanup_game(GameState *game) {
-  /* Décharger les bibliothèques */
+  /* Décharger les bibliothèques et clean txt array */
   for (int i = 0; i < game->num_players; i++) {
     if (game->players[i].handle) {
       dlclose(game->players[i].handle);
+    }
+    if (game->players[i].txt_actions) {
+      free(game->players[i].txt_actions);
     }
   }
 
@@ -290,67 +385,232 @@ static void cleanup_game(GameState *game) {
 static void update_player(GameState *game, int player_id) {
   Player *p = &game->players[player_id];
 
-  /* Joueur sans crédits ? */
-  if (p->credits <= 0)
-    return;
+  if (p->credits <= 0) return;
 
-  /* Demander l'action au joueur */
-  char action = p->get_action();
-  int cost = get_action_cost(action);
-
-  /* Pas assez de crédits ? Faire ACTION_STILL à la place */
-  if (cost > p->credits) {
-    action = ACTION_STILL;
-    cost = COST_STILL;
+  /* Gestion des timers au début du tour */
+  if (p->mute_timer > 0) p->mute_timer--;
+  if (p->swap_timer > 0) p->swap_timer--;
+  
+  if (p->fork_timer > 0) {
+      p->fork_timer--;
+      if (p->fork_timer == 0) {
+          p->fork_active_timer = 20;
+      }
+  } else if (p->fork_active_timer > 0) {
+      p->fork_active_timer--;
   }
 
-  /* Déduire le coût */
+  if (p->bomb_timer > 0) {
+      p->bomb_timer--;
+      if (p->bomb_timer == 0) {
+          /* Explosion 3x3 indépendante des malus actuels */
+          for (int dy = -1; dy <= 1; dy++) {
+              for (int dx = -1; dx <= 1; dx++) {
+                  int ex = wrap(p->bomb_x + dx, GRID_WIDTH);
+                  int ey = wrap(p->bomb_y + dy, GRID_HEIGHT);
+                  if (game->grid[ey][ex] != player_id) {
+                      int old_owner = game->grid[ey][ex];
+                      if (old_owner >= 0 && old_owner < game->num_players) {
+                          game->players[old_owner].score--;
+                      }
+                      game->grid[ey][ex] = player_id;
+                      p->score++;
+                  }
+              }
+          }
+      }
+  }
+
+  /* Demander l'action au joueur */
+  enum action action = ACTION_STILL;
+  if (p->is_txt) {
+      action = p->txt_actions[p->txt_action_idx];
+      p->txt_action_idx = (p->txt_action_idx + 1) % p->num_txt_actions;
+  } else {
+      action = p->get_action();
+  }
+
+  int cost = get_action_cost(action);
+
+  /* Majoration du coût par FORK */
+  if (p->fork_active_timer > 0) {
+      cost *= 2;
+  }
+
+  if (cost > p->credits) {
+      action = ACTION_STILL;
+      cost = COST_STILL;
+      if (p->fork_active_timer > 0) cost *= 2; /* Même STILL coûte double si on l'applique ? "tous les coûts". Oui. */
+      /* Si même le still majoré est trop cher, on limite */
+      if (cost > p->credits) {
+        cost = p->credits; /* Consomme le reste mais pas de négatif */
+      }
+  }
+
   p->credits -= cost;
 
-  /* Calculer le déplacement */
+  /* Exécution des actions uniques/spéciales pour le maître */
+  if (action == ACTION_BOMB) {
+      p->bomb_timer = 5;
+      p->bomb_x = p->x;
+      p->bomb_y = p->y;
+  } else if (action == ACTION_FORK) {
+      p->fork_timer = 5;
+      p->fork_active_timer = 0; /* destruction de l'ancien */
+      p->fork_x = p->x;
+      p->fork_y = p->y;
+  } else if (action == ACTION_CLEAN) {
+      for (int dy = -3; dy <= 3; dy++) {
+          for (int dx = -3; dx <= 3; dx++) {
+              int cx = wrap(p->x + dx, GRID_WIDTH);
+              int cy = wrap(p->y + dy, GRID_HEIGHT);
+              int old_owner = game->grid[cy][cx];
+              if (old_owner >= 0 && old_owner < game->num_players) {
+                  game->players[old_owner].score--;
+              }
+              game->grid[cy][cx] = -1;
+          }
+      }
+  } else if (action == ACTION_MUTE || action == ACTION_SWAP) {
+      int closest_id = -1;
+      int min_dist = 999999;
+      for (int i = 0; i < game->num_players; i++) {
+          if (i == player_id || game->players[i].credits <= 0) continue;
+          int dist = manhattan_toric(p->x, p->y, game->players[i].x, game->players[i].y);
+          if (dist < min_dist) {
+              min_dist = dist;
+              closest_id = i;
+          }
+      }
+      if (closest_id != -1) {
+          if (action == ACTION_MUTE) {
+              game->players[closest_id].mute_timer = 10;
+              game->players[closest_id].swap_timer = 0;
+          } else {
+              game->players[closest_id].swap_timer = 5;
+              game->players[closest_id].mute_timer = 0;
+              game->players[closest_id].swap_beneficiary = player_id;
+          }
+      }
+  }
+
+  /* Exécution pour le Clone des actions spéciales applicables (Clean, Mute, Swap) */
+  if (p->fork_active_timer > 0) {
+      if (action == ACTION_CLEAN) {
+          for (int dy = -3; dy <= 3; dy++) {
+              for (int dx = -3; dx <= 3; dx++) {
+                  int cx = wrap(p->fork_x + dx, GRID_WIDTH);
+                  int cy = wrap(p->fork_y + dy, GRID_HEIGHT);
+                  int old_owner = game->grid[cy][cx];
+                  if (old_owner >= 0 && old_owner < game->num_players) {
+                      game->players[old_owner].score--;
+                  }
+                  game->grid[cy][cx] = -1;
+              }
+          }
+      } else if (action == ACTION_MUTE || action == ACTION_SWAP) {
+          int closest_id = -1;
+          int min_dist = 999999;
+          for (int i = 0; i < game->num_players; i++) {
+              if (i == player_id || game->players[i].credits <= 0) continue;
+              int dist = manhattan_toric(p->fork_x, p->fork_y, game->players[i].x, game->players[i].y);
+              if (dist < min_dist) {
+                  min_dist = dist;
+                  closest_id = i;
+              }
+          }
+          if (closest_id != -1) {
+              if (action == ACTION_MUTE) {
+                  game->players[closest_id].mute_timer = 10;
+                  game->players[closest_id].swap_timer = 0;
+              } else {
+                  game->players[closest_id].swap_timer = 5;
+                  game->players[closest_id].mute_timer = 0;
+                  game->players[closest_id].swap_beneficiary = player_id; /* bénéficie toujours au joueur d'origine */
+              }
+          }
+      }
+  }
+
+  /* Couleurs de déplacement */
+  int color_id = player_id;
+  if (p->mute_timer > 0) color_id = -1;
+  else if (p->swap_timer > 0) color_id = p->swap_beneficiary;
+
   int dx, dy;
   get_movement(action, &dx, &dy);
 
-  /* Appliquer le déplacement avec wrap-around torique */
-  int is_dash = (action >= ACTION_DASH_U && action <= ACTION_DASH_R);
-  int is_move = (action >= ACTION_MOVE_U && action <= ACTION_MOVE_R);
+  int is_dash = (action >= ACTION_DASH_L && action <= ACTION_DASH_D);
+  int is_move = (action >= ACTION_MOVE_L && action <= ACTION_MOVE_D);
 
+  /* Appliquer le déplacement pour le maître */
   if (is_dash || is_move) {
-    /* Colorier tout le long du trajet de DASH ou MOVE */
-    int step_x = (dx > 0) ? 1 : ((dx < 0) ? -1 : 0);
-    int step_y = (dy > 0) ? 1 : ((dy < 0) ? -1 : 0);
-    int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-
-    for (int s = 0; s < steps; s++) {
-      p->x = wrap(p->x + step_x, GRID_WIDTH);
-      p->y = wrap(p->y + step_y, GRID_HEIGHT);
-
-      if (game->grid[p->y][p->x] != player_id) {
-        int old_owner = game->grid[p->y][p->x];
-        if (old_owner >= 0 && old_owner < game->num_players) {
-          game->players[old_owner].score--;
-        }
-        game->grid[p->y][p->x] = player_id;
-        p->score++;
+      int step_x = (dx > 0) ? 1 : ((dx < 0) ? -1 : 0);
+      int step_y = (dy > 0) ? 1 : ((dy < 0) ? -1 : 0);
+      int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+      for (int s = 0; s < steps; s++) {
+          p->x = wrap(p->x + step_x, GRID_WIDTH);
+          p->y = wrap(p->y + step_y, GRID_HEIGHT);
+          if (game->grid[p->y][p->x] != color_id) {
+              int old_owner = game->grid[p->y][p->x];
+              if (old_owner >= 0 && old_owner < game->num_players) {
+                  game->players[old_owner].score--;
+              }
+              game->grid[p->y][p->x] = color_id;
+              if (color_id >= 0 && color_id < game->num_players) {
+                  game->players[color_id].score++;
+              }
+          }
       }
-    }
-  } else {
-    /* TELEPORT ou STILL : On saute directement à la case d'arrivée */
-    p->x = wrap(p->x + dx, GRID_WIDTH);
-    p->y = wrap(p->y + dy, GRID_HEIGHT);
-
-    /* Colorier la case d'arrivée seulement */
-    if (game->grid[p->y][p->x] != player_id) {
-      /* Si la case appartenait à un autre joueur, retirer son score */
-      int old_owner = game->grid[p->y][p->x];
-      if (old_owner >= 0 && old_owner < game->num_players) {
-        game->players[old_owner].score--;
+  } else if ((action >= ACTION_TELEPORT_L && action <= ACTION_TELEPORT_D) || action == ACTION_STILL) {
+      p->x = wrap(p->x + dx, GRID_WIDTH);
+      p->y = wrap(p->y + dy, GRID_HEIGHT);
+      if (game->grid[p->y][p->x] != color_id) {
+          int old_owner = game->grid[p->y][p->x];
+          if (old_owner >= 0 && old_owner < game->num_players) {
+              game->players[old_owner].score--;
+          }
+          game->grid[p->y][p->x] = color_id;
+          if (color_id >= 0 && color_id < game->num_players) {
+              game->players[color_id].score++;
+          }
       }
+  }
 
-      /* Attribuer la case au joueur actuel */
-      game->grid[p->y][p->x] = player_id;
-      p->score++;
-    }
+  /* Appliquer le déplacement pour le Clone */
+  if (p->fork_active_timer > 0) {
+      if (is_dash || is_move) {
+          int step_x = (dx > 0) ? 1 : ((dx < 0) ? -1 : 0);
+          int step_y = (dy > 0) ? 1 : ((dy < 0) ? -1 : 0);
+          int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+          for (int s = 0; s < steps; s++) {
+              p->fork_x = wrap(p->fork_x + step_x, GRID_WIDTH);
+              p->fork_y = wrap(p->fork_y + step_y, GRID_HEIGHT);
+              if (game->grid[p->fork_y][p->fork_x] != color_id) {
+                  int old_owner = game->grid[p->fork_y][p->fork_x];
+                  if (old_owner >= 0 && old_owner < game->num_players) {
+                      game->players[old_owner].score--;
+                  }
+                  game->grid[p->fork_y][p->fork_x] = color_id;
+                  if (color_id >= 0 && color_id < game->num_players) {
+                      game->players[color_id].score++;
+                  }
+              }
+          }
+      } else if ((action >= ACTION_TELEPORT_L && action <= ACTION_TELEPORT_D) || action == ACTION_STILL) {
+          p->fork_x = wrap(p->fork_x + dx, GRID_WIDTH);
+          p->fork_y = wrap(p->fork_y + dy, GRID_HEIGHT);
+          if (game->grid[p->fork_y][p->fork_x] != color_id) {
+              int old_owner = game->grid[p->fork_y][p->fork_x];
+              if (old_owner >= 0 && old_owner < game->num_players) {
+                  game->players[old_owner].score--;
+              }
+              game->grid[p->fork_y][p->fork_x] = color_id;
+              if (color_id >= 0 && color_id < game->num_players) {
+                  game->players[color_id].score++;
+              }
+          }
+      }
   }
 }
 
